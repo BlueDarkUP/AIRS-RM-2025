@@ -17,6 +17,16 @@ from tracker import Track
 
 g_next_track_id = 0  # Global for assigning unique track IDs
 
+# --- 过滤阈值 ---
+# 定义置信度阈值：低于此值的检测结果将不被处理和显示
+CONFIDENCE_THRESHOLD_FOR_DISPLAY = 0.7
+# 定义角度阈值：绝对值大于此值的目标将不被显示（即使被追踪）
+ANGLE_THRESHOLD_DEGREES_FOR_DISPLAY = 80.0
+# 定义距离阈值：小于此值的目标将不被显示
+DISTANCE_THRESHOLD_FOR_DISPLAY = 0.45  # 米
+
+
+# --- 阈值定义结束 ---
 
 def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, active_tracks, labels_dict, infer_cfg):
     """
@@ -36,8 +46,9 @@ def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, a
     t_end_infer = time()
     infer_time = t_end_infer - t_start_infer
 
-    # 3. Post-process Detections
-    current_detections = []  # List to store [x1,y1,x2,y2, conf, class_id]
+    # 3. Post-process Detections and apply Confidence Filter
+    # 此列表将存储经过NMS和置信度过滤后的检测结果
+    current_detections_after_filters = []  # List to store [x1,y1,x2,y2, conf, class_id]
     if raw_model_outputs and raw_model_outputs[0] is not None:
         output_np = raw_model_outputs[0]
         output_for_nms = torch.from_numpy(output_np)  # NMS function might expect a tensor
@@ -55,8 +66,15 @@ def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, a
                 # Scale coordinates back to original image size
                 scale_coords(infer_cfg['input_shape'], pred_all_np[:, :4], (raw_img_h, raw_img_w),
                              ratio_pad=(scale_ratio, pad_size))
+
+                # --- 应用置信度过滤 ---
                 for det in pred_all_np:
-                    current_detections.append(det)  # det is [x1,y1,x2,y2, conf, class_id]
+                    if float(det[4]) >= CONFIDENCE_THRESHOLD_FOR_DISPLAY:  # det[4] 是置信度
+                        current_detections_after_filters.append(det)
+                # --- 置信度过滤结束 ---
+
+    # 后续的追踪逻辑使用经过置信度过滤的检测结果
+    current_detections_for_tracking = current_detections_after_filters
 
     # 4. Track Prediction and Matching
     predicted_track_bboxes = []
@@ -65,12 +83,12 @@ def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, a
 
     # Match detections with tracks using IoU and Hungarian algorithm
     matched_indices = []
-    unmatched_detections_indices = list(range(len(current_detections)))
+    unmatched_detections_indices = list(range(len(current_detections_for_tracking)))
     unmatched_tracks_indices = list(range(len(active_tracks)))
 
-    if len(current_detections) > 0 and len(active_tracks) > 0:
-        iou_matrix = np.zeros((len(current_detections), len(active_tracks)), dtype=np.float32)
-        for d, det_data in enumerate(current_detections):
+    if len(current_detections_for_tracking) > 0 and len(active_tracks) > 0:
+        iou_matrix = np.zeros((len(current_detections_for_tracking), len(active_tracks)), dtype=np.float32)
+        for d, det_data in enumerate(current_detections_for_tracking):
             det_box = det_data[:4]  # x1,y1,x2,y2
             for t_idx, track_box_pred in enumerate(predicted_track_bboxes):
                 iou_matrix[d, t_idx] = calculate_iou(det_box, track_box_pred)
@@ -86,15 +104,15 @@ def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, a
 
     # 5. Update Matched Tracks
     for d_idx, t_idx in matched_indices:
-        detection_data = current_detections[d_idx]
+        detection_data = current_detections_for_tracking[d_idx]
         active_tracks[t_idx].update_kf(detection_data[:4], int(detection_data[5]), float(detection_data[4]))
 
     # 6. Create New Tracks for Unmatched Detections
     newly_created_tracks_this_frame = []
     for d_idx in unmatched_detections_indices:
-        detection_data = current_detections[d_idx]
+        detection_data = current_detections_for_tracking[d_idx]
         original_model_class_id = int(detection_data[5])
-        # Only create tracks for specified classes
+        # 只有当模型类别在配置的目标追踪类别中时，才创建新追踪
         if original_model_class_id in cfg.TARGET_TRACKING_MODEL_CLASSES:
             new_track = Track(detection_data[:4], original_model_class_id, float(detection_data[4]), g_next_track_id)
             g_next_track_id += 1
@@ -130,8 +148,13 @@ def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, a
     # 9. Draw Tracks and Information on Display Frame
     num_drawn_this_frame = 0
     for track in active_tracks:
-        if track.is_tentative:  # Don't draw tentative tracks
+        if track.is_tentative:  # 不绘制暂时性追踪目标
             continue
+
+        # --- 新增：过滤特定 class_id 的目标，使其不显示 ---
+        if track.class_id in [1, 3]:  # 如果识别ID是1或3，则跳过绘制
+            continue
+        # --- 过滤结束 ---
 
         current_bbox_state_floats = track.get_current_bbox_from_state()
         x1_f, y1_f, x2_f, y2_f = current_bbox_state_floats
@@ -188,6 +211,11 @@ def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, a
                     # print(f"Rotation calculation error: {e}")
                     pass
 
+        # --- 应用角度过滤，如果角度超出阈值则跳过绘制此目标 ---
+        if track.rotation_angle is not None and abs(track.rotation_angle) > ANGLE_THRESHOLD_DEGREES_FOR_DISPLAY:
+            continue  # 跳过绘制此追踪目标
+        # --- 角度过滤结束 ---
+
         # Estimate distance
         track.estimated_distance = None
         if track.class_id in cfg.AUTO_AIM_CLASSES and bbox_h_for_display > 0:
@@ -200,6 +228,11 @@ def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, a
             except Exception as e:
                 # print(f"Distance estimation error: {e}")
                 pass
+
+        # --- 应用距离过滤，如果距离小于阈值则跳过绘制此目标 ---
+        if track.estimated_distance is not None and track.estimated_distance < DISTANCE_THRESHOLD_FOR_DISPLAY:
+            continue  # 跳过绘制此追踪目标
+        # --- 距离过滤结束 ---
 
         # Draw bounding box
         disp_x1 = max(0, x1);
@@ -243,7 +276,7 @@ def process_frame_with_tracking(model, frame_raw_bgr, frame_for_detection_bgr, a
                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
 
     # Display status messages
-    total_detections_this_frame = len(current_detections)
+    total_detections_this_frame = len(current_detections_for_tracking)  # 使用经过置信度过滤后的检测数量
     if num_drawn_this_frame == 0 and total_detections_this_frame == 0:
         cv2.putText(display_frame, "No Detections", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 128, 255), 2,
                     cv2.LINE_AA)

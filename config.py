@@ -8,9 +8,9 @@ KF_MEASUREMENT_NOISE_STD = 5.0  # Standard deviation of measurement noise
 
 # Tracking Parameters
 IOU_MATCHING_THRESHOLD = 0.3  # IOU threshold for matching tracks with detections
-MAX_FRAMES_SINCE_UPDATE = 30  # Max frames to keep a track without updates
+MAX_FRAMES_SINCE_UPDATE = 15  # Max frames to keep a track without updates
 MIN_HITS_TO_ACTIVATE = 3  # Min hits to activate a track (make it non-tentative)
-AIM_PREDICTION_FRAMES = 7  # Number of frames to predict aim point ahead
+AIM_PREDICTION_FRAMES = 4  # Number of frames to predict aim point ahead
 
 # Class IDs for Auto Aiming and specific tracking
 AUTO_AIM_CLASSES = {0, 2}  # Class IDs that trigger aiming logic
@@ -19,6 +19,11 @@ TARGET_TRACKING_MODEL_CLASSES = {0, 2} # Model class IDs to initiate tracking fo
 # Distance Estimation Parameters
 PIXEL_HEIGHT_AT_CALIBRATION_DISTANCE = 45  # Pixel height of a known object at a known distance
 CALIBRATION_DISTANCE_METERS = 0.3  # The known distance in meters
+
+# Kalman Filter Parameters
+MIN_VELOCITY_FOR_PREDICTION_SQ = 0.5 # 目标速度平方的最小阈值。低于此阈值，预瞄点将直接指向目标当前中心，
+                                    # 避免在目标静止或慢速移动时出现不必要的预测跳动。
+                                    # (例如，0.5表示速度大小约0.7像素/帧或像素/秒)
 
 # Color Detection (HSV Ranges)
 def define_color_ranges_hsv():
@@ -41,5 +46,5 @@ COLOR_RANGES_HSV = define_color_ranges_hsv()
 # Model and UI configuration (can be overridden in main.py if needed)
 DEFAULT_MODEL_PATH = "./16.om"
 DEFAULT_LABEL_PATH = './labels.txt'
-DEFAULT_INFER_CONFIG = {'conf_thres': 0.35, 'iou_thres': 0.45, 'input_shape': [640, 640]}
+DEFAULT_INFER_CONFIG = {'conf_thres': 0.35, 'iou_thres': 0.45, 'input_shape': [             640, 640]}
 DEFAULT_EXPOSURE_FACTOR = 1.0
