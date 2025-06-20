@@ -21,11 +21,11 @@ g_locked_target_track_id = None  # Global variable to store the track_id of the 
 
 # --- 过滤阈值 ---
 # 定义置信度阈值：低于此值的检测结果将不被处理和显示
-CONFIDENCE_THRESHOLD_FOR_DISPLAY = 0.7
+CONFIDENCE_THRESHOLD_FOR_DISPLAY = 0.6
 # 定义角度阈值：绝对值大于此值的目标将不被显示（即使被追踪）
-ANGLE_THRESHOLD_DEGREES_FOR_DISPLAY = 70.0
+ANGLE_THRESHOLD_DEGREES_FOR_DISPLAY = 55.0
 # 定义距离阈值：小于此值的目标将不被显示
-DISTANCE_THRESHOLD_FOR_DISPLAY = 0.45  # meters
+DISTANCE_THRESHOLD_FOR_DISPLAY = 0.4  # meters
 
 # --- 归一化坐标系下的常量 ---
 # 最大归一化距离：从画面中心(0.5, 0.5)到任意一个角的欧几里得距离

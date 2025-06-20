@@ -2,7 +2,8 @@ import cv2
 import numpy as np
 import time
 from ais_bench.infer.interface import InferSession
-from robomaster import robot  # 引入Robomaster SDK
+from robomaster import robot
+from robomaster import blaster # <<< 修改：根据官方示例，导入 blaster 模块
 
 # Project-specific imports
 import config as cfg
@@ -34,7 +35,7 @@ def main():
         ep_vision = ep_robot.vision
         ep_camera = ep_robot.camera
         ep_gimbal = ep_robot.gimbal
-        ep_blaster = ep_robot.blaster
+        ep_blaster = ep_robot.blaster # 获取blaster对象
         print("Robomaster云台复位...")
         ep_gimbal.recenter(pitch_speed=200, yaw_speed=200).wait_for_completed()
         print("Robomaster初始化完成。")
@@ -110,16 +111,18 @@ def main():
     accumulate_err_x_yaw, accumulate_err_y_pitch = 0.0, 0.0
     filtered_der_err_x_yaw, filtered_der_err_y_pitch = 0.0, 0.0
 
-    # <<< 新增：追踪稳定性相关的状态变量 >>>
-    locked_target_id = None  # 当前锁定目标的ID
-    locked_target_frame_count = 0  # 当前目标被连续追踪的帧数
-    STABILITY_THRESHOLD = 12  # 稳定追踪阈值（帧），超过此值才使用预测点
+    # --- 追踪与发射相关的状态变量 ---
+    locked_target_id = None
+    locked_target_frame_count = 0
+    STABILITY_THRESHOLD = 12
+    FIRE_COOLDOWN_SECONDS = 0.1
+    last_fire_time = 0.0
 
     try:
         while True:
             current_time = time.time()
             frame_raw_current_loop, frame_exposed_current_loop = None, None
-            locked_target_info = None  # <<< 修改：使用新的信息字典
+            locked_target_info = None
 
             # --- Read PID parameters from Trackbars ---
             p_yaw = cv2.getTrackbarPos('P_Yaw', pid_window_name)
@@ -157,48 +160,49 @@ def main():
                 frame_exposed_current_loop = paused_frame_exposed
 
             if frame_exposed_current_loop is not None:
-                # <<< 修改：接收新的返回格式 locked_target_info >>>
                 processed_display_frame, active_tracks_list, locked_target_info = process_frame_with_tracking(
                     model, frame_raw_current_loop, frame_exposed_current_loop,
                     active_tracks_list, labels_dict, infer_config
                 )
 
-            # --- PID Control Logic with Stability Check ---
+            # --- PID Control & Firing Logic with Stability Check ---
             dt = current_time - prev_time
             if dt < 1e-6: dt = 1e-6
 
             pid_target_point = None
             tracking_mode_text = "状态: 未锁定"
+            is_stably_locked = False
 
             if locked_target_info:
                 current_target_id = locked_target_info['id']
 
-                # <<< 新增：更新连续追踪帧数 >>>
                 if current_target_id == locked_target_id:
                     locked_target_frame_count += 1
                 else:
-                    # 发现新目标或切换目标，重置计数器
                     locked_target_id = current_target_id
                     locked_target_frame_count = 1
 
-                # <<< 新增：根据追踪稳定性选择目标点 >>>
                 if locked_target_frame_count < STABILITY_THRESHOLD:
-                    # 追踪不稳定，使用检测框中心
                     pid_target_point = locked_target_info['center_point_norm']
                     tracking_mode_text = f"状态: 稳定中 ({locked_target_frame_count}/{STABILITY_THRESHOLD})"
                 else:
-                    # 追踪稳定，使用卡尔曼预测点
                     pid_target_point = locked_target_info['aim_point_norm']
                     tracking_mode_text = f"状态: 已锁定 (预测)"
+                    is_stably_locked = True
+
+                    if current_time - last_fire_time > FIRE_COOLDOWN_SECONDS:
+                        print(f"[{time.strftime('%H:%M:%S')}] 目标稳定，执行发射指令！")
+                        # <<< 修改：使用正确的 blaster.WATER_FIRE 常量 >>>
+                        ep_blaster.fire(fire_type=blaster.WATER_FIRE, times=1)
+                        last_fire_time = current_time
             else:
-                # <<< 新增：目标丢失时重置状态 >>>
                 locked_target_id = None
                 locked_target_frame_count = 0
 
             # --- Actual PID Calculation and Gimbal Control ---
             if pid_target_point:
                 err_x = pid_target_point[0] - 0.5
-                err_y = 0.8 - pid_target_point[1]  # 目标y坐标在屏幕上方0.8处
+                err_y = 0.577 - pid_target_point[1]
 
                 # Yaw (X-axis) PID
                 accumulate_err_x_yaw += err_x * dt
@@ -216,18 +220,16 @@ def main():
                             1 - alpha_d_filter_pitch) * filtered_der_err_y_pitch
                 speed_y = (p_pitch * err_y) + (d_pitch * filtered_der_err_y_pitch) + (i_pitch * accumulate_err_y_pitch)
 
-                max_gimbal_speed = 300
+                max_gimbal_speed = 2000
                 speed_x = np.clip(speed_x, -max_gimbal_speed, max_gimbal_speed)
                 speed_y = np.clip(speed_y, -max_gimbal_speed, max_gimbal_speed)
 
-                ep_gimbal.drive_speed(pitch_speed=-speed_y, yaw_speed=speed_x)
+                ep_gimbal.drive_speed(pitch_speed=speed_y, yaw_speed=speed_x)
 
-                # 更新 prev_err 用于下一帧计算
                 prev_err_x_yaw = err_x
                 prev_err_y_pitch = err_y
             else:
                 ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
-                # 重置PID状态变量
                 accumulate_err_x_yaw, accumulate_err_y_pitch = 0.0, 0.0
                 prev_err_x_yaw, prev_err_y_pitch = 0.0, 0.0
                 filtered_der_err_x_yaw, filtered_der_err_y_pitch = 0.0, 0.0
@@ -237,9 +239,9 @@ def main():
             # --- Display ---
             display_frame = processed_display_frame if processed_display_frame is not None else frame_exposed_current_loop
             if display_frame is not None:
-                # <<< 新增：在屏幕上显示追踪状态 >>>
+                text_color = (0, 255, 0) if is_stably_locked else (50, 255, 50)
                 cv2.putText(display_frame, tracking_mode_text, (10, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (50, 255, 50), 2, cv2.LINE_AA)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2, cv2.LINE_AA)
 
                 cv2.putText(display_frame, f"Exp: {exposure_factor:.1f}", (display_frame.shape[1] - 120, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2, cv2.LINE_AA)

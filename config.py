@@ -9,7 +9,7 @@ KF_MEASUREMENT_NOISE_STD = 5.0  # Standard deviation of measurement noise
 IOU_MATCHING_THRESHOLD = 0.3  # IOU threshold for matching tracks with detections
 MAX_FRAMES_SINCE_UPDATE = 12# Max frames to keep a track without updates
 MIN_HITS_TO_ACTIVATE = 3  # Min hits to activate a track (make it non-tentative)
-AIM_PREDICTION_FRAMES = 8  # Number of frames to predict aim point ahead
+AIM_PREDICTION_FRAMES = 13  # Number of frames to predict aim point ahead
 
 # Class IDs for Auto Aiming and specific tracking
 AUTO_AIM_CLASSES = {0, 2}  # Class IDs that trigger aiming logic (RedArmor, BlueArmor)
@@ -47,15 +47,15 @@ MIN_NORMALIZATION_DISTANCE_METERS = 0.1 # Distance at which score becomes 1 (e.g
 # Gimbal PID Constants (Separate for Yaw and Pitch)
 # These initial values are used for trackbar default positions.
 # They can be tuned via the UI trackbars during runtime.
-GIMBAL_YAW_KP_INIT = 220
-GIMBAL_YAW_KI_INIT = 0.1
-GIMBAL_YAW_KD_INIT = 85
+GIMBAL_YAW_KP_INIT = 285
+GIMBAL_YAW_KI_INIT = 3
+GIMBAL_YAW_KD_INIT = 200
 GIMBAL_YAW_ALPHA_D_FILTER_INIT = 0 # Alpha for derivative filter
 GIMBAL_YAW_INTEGRAL_LIMIT_INIT = 5000 # Limit for integral windup
 
-GIMBAL_PITCH_KP_INIT = 120
-GIMBAL_PITCH_KI_INIT = 0.1
-GIMBAL_PITCH_KD_INIT = 60
+GIMBAL_PITCH_KP_INIT = 200
+GIMBAL_PITCH_KI_INIT = 5
+GIMBAL_PITCH_KD_INIT = 100
 GIMBAL_PITCH_ALPHA_D_FILTER_INIT = 0 # Alpha for derivative filter
 GIMBAL_PITCH_INTEGRAL_LIMIT_INIT = 5000 # Limit for integral windup
 
